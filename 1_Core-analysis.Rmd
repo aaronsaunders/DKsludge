@@ -1,0 +1,605 @@
+# Wastewater treatment plants contain a conserved core community of bacteria
+
+```{r "setup", warning=FALSE}
+source("R/functions.R")
+source("R/core_community.R")
+sessionInfo()
+```
+
+# Data
+
+The source dataset contains all:
+
+  1. Q3 samples from 2008 and 2008 from all plants. 
+  2. time series from AAW
+  
+```{r "Load data", warning=FALSE}
+identities      <- as.character(c(94, 97, 99))
+fname_template  <- "data/otuXX/seqs_XX_otutable.biom"
+filenames       <- sapply(identities, 
+                          function(id) gsub("XX", id, fname_template) ) 
+
+datasets        <- lapply(identities, function(identity) 
+                               LoadData(biompath = filenames[identity], 
+                                        mapfpath = "data/mapfile.txt") )
+names(datasets) <- paste0("otu", identities)
+
+print(datasets_summary <- data.frame(
+  "samples" = sapply(datasets, function(identity) sum(nsamples(identity))),
+  "reads"   = sapply(datasets, function(identity) sum(sample_sums(identity))),
+  "OTUs"    = sapply(datasets, function(identity) sum(ntaxa(identity))) 
+     ))
+```
+
+### Datasets
+
+ 1) `coreDatasets`  Two samples from each plant from the summer 2008 and 2009 were used to calculate the core microbial community in the cross-section of Danish plants. 
+ 2) `tsDatasets`  All the samples from Aalborg West from 2006 and 2010 were used to calculate the core community in the time-series.
+
+```{r "Subset datasets", warning=FALSE}
+subsample_depth <- 40000
+# List containing phyloseq objects for core dataset at 94, 97 and 99% identity 
+coreDatasets    <- lapply(datasets, 
+                          function(identity) selectCoreDataset(identity, 
+                                                      depth = subsample_depth, 
+                                                      seed  = 1234 ))
+names(coreDatasets) <- paste0("otu", identities)
+lapply(coreDatasets, function(identity) printDatasetStats(identity) )
+
+# List containing phyloseq objects for time-series dataset at 94, 97 and 99% id 
+tseriesDatasets <- lapply(datasets, 
+                  function(identity) selectAAWDataset(identity, 
+                                                      depth = subsample_depth))
+names(tseriesDatasets) <- paste0("otu", identities)
+lapply(tseriesDatasets, function(identity) printDatasetStats(identity) )
+```
+
+## 1. Core community
+
+## Quantifying the core community
+
+```{r "Figure 1: Core OTU conservation plot", warning=FALSE, message=FALSE}
+coredataframe  <- calcSummaryData(coreDatasets, identities, core_cutoff=1)
+
+coredata_by_id <- group_by(coredataframe, identities)
+summarise(coredata_by_id, 
+          coretotalOTUs    = sum(taxsum),
+          coreOTUs         = sum(taxsum[corestatus == "core"]),
+          percentcorereads = round(readprop[corestatus == "core"] * 100, 1))
+
+coreplots <- plotCore(coredataframe)
+otuplot   <- coreplots[[1]]
+readsplot <- coreplots[[2]]
+print(Figure1   <- grid.arrange(otuplot, readsplot, nrow = 2))
+
+pdf(file = "figs/Figure_1_core_otu_conservation40k.pdf")
+Figure1
+dev.off()
+```
+
+
+### Fraction of Frequently occuring OTUs (observed 26 times)
+
+```{r "Count frequently observed OTUs (nObs == 26 )"}
+filter(coredataframe, numsamples == 26 ) %>%
+  group_by(identities) %>%
+  summarise(
+    total_OTUs  = sum(taxsum),
+    percent_reads = round(sum(readprop) * 100, 1) )
+```
+
+### Fraction of Frequently occuring OTUs (observed 20 + times)
+
+```{r "Count frequently observed OTUs (nObs > 20 )"}
+filter(coredataframe, numsamples >= 20 ) %>%
+  group_by(identities) %>%
+  summarise(
+    total_OTUs  = sum(taxsum),
+    percent_reads = round(sum(readprop) * 100, 1) )
+```
+
+### Fraction of Infrequently observed OTUs (observed no more than 5 times)
+
+```{r "Count infrequently observed"}
+    filter(coredataframe, numsamples < 6 ) %>%
+  group_by(identities) %>%
+  summarise(
+    total_OTUs  = sum(taxsum),
+    percent_reads = round(sum(readprop) * 100, 1) )
+```
+
+
+## Cumulative abundance distribution
+
+The distribution of abundances in bacterial communities is uneven - some 
+organisms are abundant some are rare.
+
+Plotting percent cumulative abundance vs. rank ordered OTUs describes this 
+distribution.
+
+```{r "Figure 2: Cumulative abundance curve", warning=FALSE, message=FALSE}
+cum_abun_plot <- plot_CumulRankAbundance(dataset = coreDatasets[["otu94"]], 
+                                       fname = "figs/figure2_cum_abun_plot_94.pdf",
+                                       dominant_fraction = 0.8)
+print(cum_abun_plot)
+```
+
+### Distribution of abundances per OTU
+
+There is a lot of variation in the abundances but many of the abundant organisms are consitently abundant. These are the organisms that are core. The size of the core will increase as a function of depth for these consistent organisms.
+
+
+```{r "Figure 3: boxplot the top OTUs"}
+plotTopN(coreDatasets[["otu94"]], 
+         topN = 50, 
+         plot_filename = "figs/Figure_3_top50_id94_boxplot.pdf", 
+         core_cutoff = 1.0)
+```
+
+### Temporal stability of a single plant through time
+
+Time series in AAW
+
+What proportion of the core OTUs are core in: 
+ - the two AAW samples used for the core
+ - all the AAW samples
+
+```{r "calc AAW timeseries core"}
+tsdataframe <- calcSummaryData(tseriesDatasets, identities, core_cutoff=1)
+group_by(tsdataframe, identities) %.%
+  summarise( coretotalOTUs    = sum(taxsum),
+             coreOTUs         = sum(taxsum[corestatus == "core"]),
+             percentcorereads = round(readprop[corestatus == "core"] * 100, 1))
+
+tscoreplot  <- plotCore(tsdataframe)
+tsotuplot   <- tscoreplot[[1]]
+tsreadsplot <- tscoreplot[[2]]
+print(tscoreplot  <- grid.arrange(tsotuplot, tsreadsplot, nrow = 2))
+
+pdf(file = "figs/Figure_S2_aawtimeseries_core_conservation_40k.png")
+tscoreplot
+dev.off()
+```
+
+
+### Binning of OTUs by observation frequency and frequency of high-abundance
+
+```{r "Dominant OTUs"}
+dataset   <- coreDatasets[["otu94"]] 
+core_prop <- 1
+
+dominant  <- sapply(sample_names(dataset), 
+       function(samplename) fill_ha_data(dataset, samplename))
+row.names(dominant) <- taxa_names(dataset)
+
+observed <- as.data.frame(otu_table(transform_sample_counts(
+    dataset, function(x) ifelse(x > 0, 1, 0 ) )))
+
+summary.df <- data.frame(
+                      "OTU"    = taxa_names(dataset),
+                      "nHA"    = apply(dominant, 1, sum),
+                      "nObs"   = apply(observed,      1, sum),
+                      "median" = apply(otu_table(dataset), 1, median),
+                      "geomean"= apply(otu_table(dataset), 1, function (x) 
+                                          round(exp(mean(log(x))), 1)),
+                      "max"    = apply(otu_table(dataset), 1, max),
+                      "min"    = apply(otu_table(dataset), 1, min),
+                      "n1per"  = apply(otu_table(dataset), 1, 
+                                           function(x) sum(x > 400)) )
+
+# how does median relate to nHA and nObs?
+ggplot(summary.df, aes(nObs, median)) + 
+  geom_point(alpha = 0.2) + 
+  scale_y_log10()
+ggplot(summary.df, aes(nHA, median)) + 
+  geom_point() + scale_y_log10()
+```
+
+These plots are the justification for having nHA > 10 as the cutoff for significance. 
+
+## Figure 4
+
+Sets up the empty Figure 4 plot. The data was filled manually using Inkscape.
+
+```{r "Figure 4: Dominant vs. Frequency"}
+summary.df <- mutate(summary.df, 
+                  group    = factor(cut(nHA, breaks=c(-1, 0, 9, 25, 26), 
+                                  labels= c("4","3", "2", "1")), levels = 1:4),
+                  Obsclass = cut(nObs, breaks=c(0, 19, 25, 26), 
+                                  labels= c("ob1", "ob20", "ob26")) )
+summary.df <- cbind(summary.df, as.data.frame(otu_table(dataset)))
+summary.df <- arrange(summary.df, desc(nHA), desc(nObs), desc(median))
+
+print(Figure4 <- plotNewFigure4(summary.df))
+
+group_by(summary.df, group) %.%
+  summarise( nOTUs = n() ,
+             percent = round(sum(percent), 0)) 
+group_by(summary.df, Obsclass) %.%
+  summarise( nOTUs = n() ,
+             percent = round(sum(percent), 0)) 
+
+summary.df2 <- group_by(summary.df, nHA, nObs) %.%
+  summarise( nOTUs = n() ,
+             percent = round(sum(percent), 2)) 
+summary.df2 <- mutate(summary.df2, 
+                  group    = factor(cut(nHA, breaks=c(-1, 0, 9, 25, 26), 
+                                  labels= c("4","3", "2", "1")), levels = 1:4),
+                  Obsclass = cut(nObs, breaks=c(0, 19, 25, 26), 
+                                  labels= c("ob1", "ob20", "ob26")) )
+
+```
+
+## Data for plotting onto Figure 4
+```{r}
+nObs_breaks = c(1, 20, 25, 26)
+nHA_breaks  = c(0, 1, 10, 25, 26) 
+library(scales)
+
+grouprecs <- data.frame(
+  group  = c(   4,    3,    2,    1),
+  ystart = c(-0.5,  0.5,  9.5, 25.5),
+  ystop  = c( 0.5,  9.5, 25.5, 26.5),
+  xstart = c(-0.5, -0.5, 19.5, 25.5),
+  xstop  = c(26.5, 26.5, 26.5, 26.5) )
+
+grouprecs$group = factor(grouprecs$group)
+
+A <- ggplot(data=summary.df, aes(y = nHA, x = nObs) ) +
+  xlab("Observed in n samples") +
+  ylab("Highly-abundant in n samples") +
+  scale_fill_manual(values = alpha(c("red", "orange", "darkgreen", "grey"), 0.3)) +
+  geom_rect( aes(x = NULL, y = NULL, xmin= xstart, xmax=xstop, 
+                 ymin=ystart, ymax=ystop, fill = group), data=grouprecs) +
+  geom_point(data=summary.df, stat= "identity", size = 2, fill = "black", alpha = 0.1) +
+  scale_y_continuous(breaks= nHA_breaks,  labels= c(0, 1, 10, 25, 26), expand=c(0,0)) +
+  scale_x_continuous(breaks= nObs_breaks, labels= c(1, 20, 25, 26), expand=c(0,0)) +
+  xlab("Observed in n samples") +
+  ylab("Highly-abundant in n samples") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.title.x = element_text(size = 6),
+          axis.title.y = element_text(size = 6, vjust = 0.2),
+          axis.text.x  = element_text(size = 5),
+          axis.text.y  = element_text(size = 5),
+          axis.ticks.x = element_line(size = 0.3),
+          axis.ticks.y = element_line(size = 0.3),
+          panel.grid.minor = element_blank(),
+          panel.border     = element_rect(color= "black"),
+          axis.line        = element_line(size = 0.3))
+
+ggsave(filename="figs/Figure4.pdf", plot= A, width= 8, height = 6, units= "cm")
+
+A2 <- ggplot(data=summary.df, aes(y = nHA, x = nObs) ) +
+  xlab("Observed in n samples") +
+  ylab("Highly-abundant in n samples") +
+  scale_fill_manual(values = alpha(c("red", "orange", "darkgreen", "grey"), 0.3)) +
+  geom_rect( aes(x = NULL, y = NULL, xmin= xstart, xmax=xstop, 
+                 ymin=ystart, ymax=ystop, fill = group), data=grouprecs) +
+  geom_point(data=summary.df, stat= "identity", size =(3), fill = "black", alpha = 0.2) +
+  scale_y_continuous(breaks= nHA_breaks,  labels= c(0, 1, 10, 25, 26), expand=c(0,0)) +
+  scale_x_continuous(breaks= nObs_breaks, labels= c(1, 20, 25, 26), expand=c(0,0)) +
+  xlab("Observed in n samples") +
+  ylab("Highly-abundant in n samples") +
+  theme_bw() +
+  theme(legend.position = "none", 
+        axis.title.x = element_blank(),
+        axis.text.x  = element_blank(),
+        axis.title.y = element_text(size = 6, vjust = 0.2),
+        axis.text.y  = element_text(size = 6),
+        axis.ticks.x = element_line(size = 0.3),
+        axis.ticks.y = element_line(size = 0.3),
+        panel.grid.minor = element_blank(),
+        panel.border     = element_rect(color= "black"),
+        axis.line        = element_line(size = 0.3))
+
+df3 <- group_by(summary.df, nHA) %.%
+  summarise( nOTUs = n() ,
+             percent = round(sum(percent), 0)) 
+
+B <- ggplot(df3, aes(y = nHA, x = cumsum(percent)) ) +
+  geom_line() +
+  scale_y_continuous(breaks= nHA_breaks,  labels= c(0, 1, 10, 25, 26)) +
+  xlab("Cumulative percentage") +
+  ylab("Highly-abundant in n samples") +
+  theme_bw() + 
+  theme(axis.title.y = element_blank(),
+         axis.text.y  = element_blank(),
+        axis.title.x = element_text(size = 6),
+          axis.text.x  = element_text(size = 6),
+          axis.ticks.x = element_line(size = 0.3),
+          axis.ticks.y = element_line(size = 0.3),
+          panel.grid.minor = element_blank(),
+          panel.border     = element_rect(color= "black"),
+          axis.line        = element_line(size = 0.3))
+
+df4 <- group_by(summary.df, nObs) %.%
+  summarise( nOTUs = n() ,
+             percent = round(sum(percent), 0)) 
+
+C <- ggplot(df4, aes(y = cumsum(percent), x = nObs) ) +
+  geom_line() +
+  scale_x_continuous(breaks= nObs_breaks, labels= c(1, 20, 25, 26)) +
+  xlab("Observed in n samples") +
+  ylab("Cumulative percentage") +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 6),
+          axis.title.y = element_text(size = 6, vjust = 0.2),
+          axis.text.x  = element_text(size = 6),
+          axis.text.y  = element_text(size = 6),
+          axis.ticks.x = element_line(size = 0.3),
+          axis.ticks.y = element_line(size = 0.3),
+          panel.grid.minor = element_blank(),
+          panel.border     = element_rect(color= "black"),
+          axis.line        = element_line(size = 0.3))
+
+plots <- list(A2, B, C)
+
+layout <- matrix(c(1, 1, 1, 2, 1, 1, 1, 2, 3, 3, 3, 4), nrow = 3, byrow = TRUE)
+multiplot(plotlist = plots, layout = layout)
+
+pdf(file="figs/Figure4_multi.pdf", width= 6,2, height = 6.2 )
+multiplot(plotlist = plots, layout = layout)
+dev.off()
+
+
+```
+
+
+
+How many OTUs/reads are in each category
+
+```{r "Figure 4 results for plot"}
+r <- melt(select(summary.df, OTU, group, Obsclass, AMPA057:AMPA724),
+                id.vars=c("OTU", "group", "Obsclass") , 
+                variable.name="sample", value.name="count" ) %.%
+  group_by(Obsclass, group) %.%
+  summarise(readpercent = round((sum(count) / (26 * 40000)) * 100, 1),
+                  nOTUs = n_distinct(OTU))
+acast(r, group ~ Obsclass, value.var= "nOTUs", 
+                           fun.aggregate= sum, 
+                           margins= TRUE)
+acast(r, group ~ Obsclass, value.var= "readpercent", 
+                           fun.aggregate= sum, 
+                           margins= TRUE)
+```
+
+
+```{r}
+Acinetobacter <- subset_taxa(physeq = coreDatasets[["otu94"]], 
+                                 Genus == "Acinetobacter")
+ntaxa(Acinetobacter)
+round(sum(taxa_sums(Acinetobacter)) / sum(taxa_sums(coreDatasets[["otu94"]])) * 100, 
+      digits = 2)
+```
+
+
+
+```{r}
+# NB rounding error# 3. transiently highly-abundant
+group3otus <- as.vector(with(summary.df, summary.df[ group == 3, "OTU"]))
+tHA_percent <- round(
+  as.data.frame(otu_table(dataset)[ group3otus, ] / 40000 * 100), 1)
+
+
+df       <- data.frame("rank" = 1:26, 
+                       "percentHA" = sort(colSums(tHA_percent), decreasing=TRUE))
+plant    <- samData(dataset)[row.names(df), "plant"]
+df$plant <- as.character(plant$plant)  # crazy phyloseq object!!
+
+#TODO fix the label on this? why does the sample_data object persist after as.character()
+# ggplot(df, aes(x=rank, y= percentHA)) + geom_point(stat = "identity") + 
+#   scale_x_discrete(labels= plant)
+# + xlab("samples") + ylab("transiently HA read percent")
+
+# num trans.abun OTUs per sample
+apply(tHA_percent, 2, function(sample) sum(sample > 1)) 
+samData(dataset)[names(sort(colSums(tHA_percent), decreasing=TRUE)), "plant"]
+
+HA.tran <- subset(summary.df, nObs  <= 20 & nHA > 0 &  (n1per > 0))
+tax_table(dataset) [ as.vector(HA.tran$OTU), 1:6 ]
+nrow(tax_table(dataset) [ as.vector(HA.tran$OTU), 1:6 ])
+```
+
+
+## Single sequence resolution on the abundant OTUs
+
+```{r}
+# Checked OTU681 using parsimony insertion in ARB
+otu94.per <- transform_sample_counts(coreDatasets[["otu94"]], 
+                                     function(x) x / sum(x) * 100)
+tax_table(otu94.per)["681", 5:6] <- c("Intrasporangiaceae", "Tetrasphaera_etal")
+Tetrasphaera <- subset_taxa(otu94.per, Genus ==  "Tetrasphaera_etal" )
+write.table(taxa_names(Tetrasphaera), file="data/unfiltered_tetra_otulist94.txt",
+            quote= FALSE, col.names= FALSE, row.names= FALSE, sep="\n")
+
+
+plot_heatmap(Tetrasphaera, sample.label="plant", method= "NMDS")
+plot_bar(Tetrasphaera, "Genus", facet_grid=(year ~ plant), fill= "OTU")
+```
+
+Then the reads that make up these three OTUs were parsed out of the seqs file,
+and reclustered at 99% identity using qiime.
+
+
+
+
+# export the OTU data to a table for the Table S2
+
+```{r "Export ecocore Table S2"}
+#list of tax names 
+eco.core.taxa     <- as.vector(with(summary.df, 
+                               summary.df[ HAclass %in% c("HA10", "HA26"), "OTU"]))
+trans.abun.noncore.taxa <- as.vector(with(summary.df, 
+                               summary.df[ HAclass == "HA1" & n1per > 0, "OTU"]))
+
+length(trans.abun.noncore.taxa)
+
+# lists of taxnames ecocore and abun.noncore
+taxa.to.export <- c(ecocore.taxa, trans.abun.noncore.taxa)
+outstats       <- select(summary.df, 1:12) %.%
+                  filter(OTU %in% taxa.to.export)
+outtaxtable    <- as.data.frame(tax_table(coreDatasets[["data.94"]])[ taxa.to.export, 1:6])
+outdata        <- cbind(outstats, outtaxtable) %.%
+                  arrange(desc(median))
+
+table(outdata$group)
+
+write.table(outdata, file="figs/Table_S2_newcore_otutable.txt", sep="\t", 
+            quote=FALSE, row.names=FALSE, col.names=TRUE)
+```
+
+
+### Nitrotoga and Nitrospira
+
+```{r "NOB"}
+# Compare replicate data
+
+data.97 <- datasets[["otu97"]]
+amplibs <- sample_data(data.97)$SampleID[
+                      sample_data(datasets[["otu97"]])$sample_id == "293" ]
+data.97 <- prune_samples(x=data.97, samples=as.character(amplibs) )
+table(sam_data(data.97)$sample_id, sam_data(data.97)$dna_id)
+data.97 <- rarefy_even_depth(data.97, 
+                             rngseed = 1234,
+                             sample.size = 14000, 
+                             trimOTUs= TRUE)
+
+data.97 <- transform_sample_counts(physeq = data.97, function(x) x / sum(x) * 100)
+NOB <- subset_taxa(data.97, (Family ==  "Gallionellaceae") | 
+                            (Genus == "Nitrospira") )
+
+plot_bar(NOB, "Genus", facet_grid = . ~ SampleID  ) +
+    geom_bar(aes(fill = Genus), stat = "identity", position = "stack")
+
+plot_bar(NOB, "Genus", facet_grid = dna_id ~SampleID  ) +
+    geom_bar(aes(fill = Genus), stat = "identity", position = "stack")
+
+# compare core samples
+data.97 <- coreDatasets[["otu97"]]
+data.97 <- transform_sample_counts(physeq = data.97, 
+                                   function(x) x / sum(x) * 100)
+NOB <- subset_taxa(data.97, (Genus ==  "Nitrotoga_etal") | 
+                            (Genus == "Nitrospira") )
+
+p <- plot_bar(NOB, "Genus", facet_grid = year ~ plant ) +
+    geom_bar(aes(fill = Genus), stat = "identity", position = "stack") 
+levels(p$data$Genus) <- c("Nitrospira", "Nitrotoga")
+p$data$plant_name <- factor(gsub(x=p$data$plant_name, 
+                                 pattern="oe", replacement="ø"))
+p$data$plant_name <- factor(gsub(x=p$data$plant_name, 
+                                 pattern="aa", replacement="å"))
+
+totals <- as.data.frame(
+  select(p$data, OTU, Sample, Abundance, year, Genus, plant_name) %.%
+  filter(year == 2009, Genus == "Nitrotoga") %.%
+  acast(plant_name ~ Genus, value.var="Abundance", sum))
+totals$plant_name    <- row.names(totals)
+plant_names_by <- with(totals, 
+              totals[ order(Nitrotoga, decreasing=TRUE), "plant_name"])
+p$data$plant_name <- factor(p$data$plant_name, levels=plant_names_by)
+
+# formatted in greyscale for publication
+p2 <- ggplot(p$data, aes(x = plant_name, y = Abundance, fill = Genus)) + 
+    geom_bar(position=position_dodge(), stat = "identity") +
+    facet_grid(year ~ .) +
+    theme_bw() +
+    ylab(label= "Read abundance (%)") +
+    xlab(label = "Plant") +
+    scale_fill_manual(values=c("grey50", "black")) +
+    annotate("text", x= "Aalborg East", y= 2.5, 
+             label= "2008", size = 2) +
+    theme(axis.title.x = element_text(size = 8),
+          axis.title.y = element_text(size = 8, vjust = 0.2),
+          axis.text.x  = element_text(size = 6,  hjust = 1, vjust = 1, 
+                                      angle = 45),
+          axis.text.y  = element_text(size = 6),
+          axis.ticks.x = element_line(size = 0.3),
+          axis.ticks.y = element_line(size = 0.3),
+          panel.grid.minor = element_blank(),
+          strip.background = element_rect(linetype= "blank", fill = "white"),
+          strip.text.y     = element_blank(),
+          axis.line        = element_line(size = 0.3),
+          legend.title     = element_blank(),
+          legend.text      = element_text(size=5, face="italic"),
+          legend.key.size  = unit(0.4, "lines"),
+          legend.key       = element_rect(size= 1, colour= "white"),
+          legend.justification = c(1, 1), 
+          legend.position      = c(1.055, 1.086)
+          )
+
+fname <- "figs/Figure_7_NOB_core.pdf"
+ggsave(plot=p2, file = fname, width=8, height=6.37, units="cm")
+
+# Compare time series data
+ts.97 <- tseriesDatasets[["otu97"]]
+ts.97 <- transform_sample_counts(physeq = ts.97, function(x) x / sum(x) * 100 )
+NOB <- subset_taxa(ts.97, (Genus ==  "Nitrotoga_etal") | (Genus == "Nitrospira") )
+NOB <- tax_glom(NOB, taxrank = "Genus")
+
+
+p <- plot_bar(NOB, "date") +
+  geom_bar(aes(fill = Genus), stat = "identity", position = "stack")
+levels(p$data$Genus) <- c("Nitrospira", "Nitrotoga")
+
+p$data$month <- factor(p$data$month, labels= c("February", "May", "August"))
+p$data$date  <- as.Date(p$data$date, format = "%d-%m-%Y")
+
+
+p2 <- ggplot(p$data, aes(x = date, y = Abundance, color = Genus)) + 
+  geom_point( stat = "identity") +
+  scale_x_date( ) +
+  scale_y_continuous(limit = c(0, 2.1)) +
+  geom_line() +
+  scale_color_brewer(palette = "Set1") +
+  theme_bw() +
+  ylab(label= "Read Abundance (%)") +
+  xlab(label = "Plant") +
+  theme(axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18, vjust = 0.2),
+        axis.text.x  = element_text(size = 16,  hjust = 1, vjust = 1, 
+                                    angle = 45),
+        axis.text.y  = element_text(size = 16),
+        axis.ticks.x = element_line(size = 0.3),
+        axis.ticks.y = element_line(size = 0.3),
+        strip.text   = element_text(size = 16),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(linetype= "blank", fill = "white"),
+        axis.line        = element_line(size = 0.3),
+        legend.title     = element_blank(),
+        legend.text      = element_text(size=18, face = "italic") )
+
+ggsave(plot=p2, path = "figs/", file = "NOB_timeseries.pdf", width=20, height = 12, units="cm")
+
+
+d <- read.delim('data/MIDAS_combined.csv', row.names = 1)
+mean(d$T_lc, na.rm= TRUE)
+
+# TODO change data to Table S1
+# yearly temp means in DK plants
+d.means <- ddply(d, .(Plant, Quarter), summarize, 
+              mean = mean(T_lc, na.rm= TRUE),
+              sd   = sd(T_lc, na.rm= TRUE),
+              n    = sum(!is.na(T_lc) ))
+d.means <- d.means[ d.means$n > 3 , ]
+d.means <- subset(d.means, Quarter %in% c(1, 3) )
+
+ggplot(d.means, aes(Plant, mean, color = factor(Quarter))) + geom_point() +
+  theme(axis.text.x = theme_text(angle = 45, hjust = 1))
+
+summarySE(d.means, measurevar="mean", groupvars=c("Quarter"), na.rm=TRUE)
+```
+
+
+```{r}
+# what percentage of reads have a genus level classification?
+data.97 <- coreDatasets[["otu97"]]
+data.97.genus <- tax_glom(data.97, taxrank= "Genus", NArm= FALSE)
+ntaxa(data.97.genus)
+total_reads <- sum(sample_sums(data.97.genus))
+data.97.genus_na <- subset_taxa(data.97.genus, is.na(Genus) )
+ntaxa(data.97.genus_na)
+total_genusna_reads <- sum(sample_sums(data.97.genus_na))
+total_genusna_reads / total_reads
+
+```

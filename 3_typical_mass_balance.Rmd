@@ -1,0 +1,141 @@
+# Typical Mass balance calculation
+
+```{r "load functions, warning=FALSE, message=FALSE"}
+source('R/functions.R')
+```
+
+  - inf = influent
+  - eff = effluent
+  - WAS = waste activated sludge
+  - AS  = activated sludge
+  - WW  = wet weight
+  - DW  = dry weight
+  - OM  = organic matter
+  - OM  = DW  -> inorganic matter assumed negligible
+  - COD = Chemical oxygen demand
+  - Vp   = total plant volume
+  - Xp   = total plant biomass
+
+## Define Constants
+
+```{r "define constants"}
+# Nominal plant volume
+Vp        <- 1 
+# Hydrolyic retension time
+HRT       <- 1       # days
+# Solids retension time
+SRT       <- 30      # days
+# Assumed yield
+Y_assumed <- 0.28
+
+# unit conversion factors
+um3_per_cm3  <- 1e12
+g_per_kg     <- 1e3
+cm3_per_m3   <- 1e6
+```
+
+## Dry weather influent
+
+```{r "Dry weather influent"}
+# COD to organic matter ratio
+COD_per_OM_inf  <- 1.42 # kg-COD kg-OM^-1 [2]
+# mean influent COD
+COD_inf         <- 0.582   # kg-COD m⁻³        [1] 
+# mean influent cell concentration 
+cells_inf       <- 1.0e8   # cells cm⁻³        [1, 4] 
+# influent flow
+flow_inf        <- Vp * HRT # V day⁻¹
+
+cells_inf <- cells_inf * cm3_per_m3   # cells m^-3 
+OM_inf    <- COD_inf / COD_per_OM_inf # kg-OM m⁻³
+
+# calculation of cell fraction of organic matter
+# cell mass = 95 fg cell⁻¹     [3]
+# cell mass = 9.5e-13 g cell⁻¹
+  
+cell_volume     <- 0.285 # µm³-cell cell⁻¹ [1] 
+cell_density    <- 1.1   # g-cell cm⁻³     [1, 3] 
+OM_per_cell_WW  <- 0.22  # g-OM g-cell⁻¹   [1, 3] 
+
+cell_OM          <- calculate_cell_OM(cell_volume, cell_density, OM_per_cell_WW) 
+cell_OM_inf      <- cells_inf * cell_OM
+# g-OM m⁻³          cell m⁻³ * g-OM cell⁻¹
+cell_OM_inf      <- cell_OM_inf / g_per_kg
+# kg-OM m⁻³
+cell_OM_percent  <- round(cell_OM_inf / OM_inf * 100, 1)
+```
+
+## Waste activated sludge
+
+```{r "Waste activated sludge"}
+# mean AS cell concentration 
+cells_AS <- 1.0e10                 # cells cm⁻³  
+cells_AS <- cells_AS * cm3_per_m3  # cells m⁻³ 
+# WAS OM & COD
+OM_AS    <- 5.0           # kg-OM  m⁻³
+
+COD_per_VSS_AS <- 1.42   # kg-COD kg-VSS⁻¹
+VSS_per_OM_AS  <- 0.75   # kg-VSS kg-OM⁻¹
+COD_AS  <- OM_AS * VSS_per_OM_AS * COD_per_VSS_AS  # kg-COD m⁻³
+
+# WAS thickening
+WAS_thick <- 3.0
+OM_WAS    <- OM_AS    * WAS_thick  # kg-OM  m⁻³
+COD_WAS   <- COD_AS   * WAS_thick  # kg-COD m⁻³
+
+cells_WAS <- cells_AS * WAS_thick
+
+# WAS flow
+flow_WAS <- Vp * (1 / SRT) / WAS_thick # V day⁻¹
+```
+
+## Dry weather effluent
+
+```{r "Dry weather effluent"}
+# effluent flow
+flow_eff <- Vp - flow_WAS            # V day⁻¹
+# effluent OM & COD
+OM_eff   <- 20                       #  g-OM m⁻³
+OM_eff   <- OM_eff / g_per_kg        # kg-OM m⁻³
+COD_eff  <- OM_eff * COD_per_OM_inf  # kg-COD m⁻³
+# mean effleunt cell concentration 
+cells_eff <- 1.0e7                   # cells cm⁻³  [4, 5]
+cells_eff <- cells_eff * cm3_per_m3  # cells m⁻³ 
+```
+
+## Mass balance
+
+```{r}
+# Cell budget
+ncells_in  <-  cells_inf * flow_inf
+ncells_eff <-  cells_eff * flow_eff
+ncells_AS  <-  cells_AS  * Vp
+ncells_WAS <-  cells_WAS * flow_WAS
+ncells_out <-  ncells_eff + ncells_WAS
+
+pprint <- function(x) {paste0(round(x * 100, 1), "%")}
+# % of out cells in effluent
+pprint(ncells_eff / ncells_out)
+# % of out cells in waste
+pprint(ncells_WAS / ncells_out)
+# fraction of out cells coming with WW
+pprint(ncells_in  / ncells_out)
+# Daily effluent fraction of AS
+pprint(ncells_eff / ncells_AS)
+# Daily waste fraction of AS
+pprint(ncells_WAS / ncells_AS)
+```
+
+
+## References
+  [1]: Vollertsen et al. 2001. Comparison of methods for determination of microbial biomass in wastewater
+         
+  [2]: Henze et al. 2002. 
+  
+  [3]: Loferer-Krössbacher et al. 1998. Determination of bacterial cell dry mass by transmission electron microscopy and densitometric image analysis.
+         
+  [4]: Snaidy. 2009. PhD Thesis. Detection and Enumeration of E. coli and Campylobacter in wastewater and treated water by CARD-FISH.
+         
+  [5]: Morgan-Sagastume 2008
+  
+  [6]: Frølund 1996

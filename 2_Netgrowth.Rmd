@@ -1,0 +1,319 @@
+# 2. Immigration and netgrowth
+```{r}
+source('R/functions.R')
+source("R/core_community.R")
+source("R/net_growth_rate.R")
+sessionInfo()
+```
+
+## load data
+
+```{r "Load data"}
+biomfname = "data/otu97/netgrowth_seqs_97_otutable.biom"
+netgrowthdata <- LoadData(biompath=biomfname, 
+                          mapfpath="data/mapfile.txt")
+```
+
+
+```{r "wastewater core"}
+ids    <- as.character(c(94, 97, 99))
+fname_template <- "data/otuXX/netgrowth_seqs_XX_otutable.biom"
+fnames <- sapply(ids, function(id) gsub("XX", id, fname_template) ) 
+
+datasets <- lapply(ids, function(id) 
+  LoadData(biompath= fnames[id], mapfpath= "data/mapfile.txt") )
+ids <- sapply(ids, function(id) paste0("otu", id ))
+names(datasets) <- ids
+
+sapply(datasets, function(dataset)     sample_sums(dataset) )
+sapply(datasets, function(dataset) sum(sample_sums(dataset)))
+sapply(datasets, function(dataset) sum(   nsamples(dataset)))
+sapply(datasets, function(dataset) sum(      ntaxa(dataset)))
+
+min(sapply(datasets, function(dataset) sample_sums(dataset) ))
+resample_depth <- 40000
+
+rarefyDataset <- function(mydata, depth= FALSE, seed= FALSE){
+  mydata <- subset_samples(mydata, type == "WW")
+  mydata <- rarefy_even_depth(mydata,     rngseed = seed,
+                                      sample.size = depth, 
+                                         trimOTUs = TRUE)
+  mydata
+}
+
+WWDatasets <- lapply(ids, function(id) 
+                    rarefyDataset(datasets[[id]],
+                                  depth = resample_depth, 
+                                   seed = 1234))
+names(WWDatasets) <- ids
+
+lapply(WWDatasets, function(dataset) printDatasetStats(dataset) )
+
+data.k <- SampleEvenDepth(datasets[["otu97"]], 
+                          depth = 20000, 
+                          seed = 1234)
+print(sample_sums(data.k))
+```
+
+## Core community in influent wastewater
+
+```{r "influent core community"}
+coredataframe <- calcSummaryData(WWDatasets, ids, core_cutoff=1)
+
+OTUtotals <- group_by(coredataframe, identities) %.%
+  summarize( "totalOTUs"  = sum(taxsum),
+     "coreOTUs"   = taxsum[ corestatus == "core"] , 
+     "percentcoreOTUs"= round(taxsum[corestatus == "core"] / 
+                               sum(taxsum) * 100, 1),
+     "percentreads"   = round(readprop[corestatus == "core"] *
+                                100, 1))
+print(OTUtotals)
+
+p <- plotCore(coredataframe, cumulative = FALSE)
+otuplot   <- p[[1]]
+readsplot <- p[[2]]
+
+pdf(file = "figs/ww_core40k.pdf")
+grid.arrange(otuplot, readsplot, nrow = 2)
+dev.off()
+grid.arrange(otuplot, readsplot, nrow = 2)
+```
+
+
+## Abundnace of top 10 OTUs
+
+```{r "abundance of top10 in infleunt and sludge"}
+ds   <- WWDatasets[["otu94"]]
+ds.p <- transform_sample_counts(ds, function(x) x / sum(x))
+n    <- 10
+topNww_otus  <- names(sort(taxa_sums(ds.p), decreasing=TRUE)[1:n])
+topN.ww      <- subset_taxa(ds, taxa_names(ds) %in% topNww_otus )
+
+print(formatAverage(sample_sums(topN.ww) / sample_sums(ds) * 100,
+                    decimals=0))
+
+plot3 <- compareTop20AsWw(data.k)
+ggsave(path="figs", filename="top20OTUsWW_vs_AS.pdf", 
+       plot=plot3, width=8)
+plot3
+```
+
+
+
+## Overall comparison of the diversity in the wastewater and activated sludge samples.
+
+```{r "ordination"}
+ord.cca <- ordinate(physeq = data.k, 
+                    method = "CCA", 
+                    distance = "bray")
+print(
+  plot1  <- plot_ordination(physeq = data.k, 
+                            ordination=ord.cca, 
+                            shape = "plant",
+                            type = "samples", 
+                            color = "sample_type") +
+  geom_text(aes(label = pair), color= "black", size = 5, vjust = 2) +  
+  geom_point(size = 5)
+)
+
+ggsave(path="figs", filename="CCA_AS_vs_WW.pdf", plot=plot1)
+```
+
+
+The CCA splits the samples by sample type in the first CA and roughly by plant in the second.
+
+
+Add run model
+
+## Calculate Net growth rates
+
+```{r "Run Net growth rate script"}
+
+df.netgrowth <- calcNetGrowthData(data.k, k_lower_bound=-0.2, seed = 1234)
+df.netgrowth$km_class <- cut(df.netgrowth$km, 
+                              breaks=c(-0.22, -0.1, 0, 0.03, 10), 
+                              labels=c( "inactive", "low", "active", "max") )
+df.netgrowth[(df.netgrowth$prop_ww == 0), "km_class" ] <- "max"
+
+df.netgrowth$tax_name <- makeTaxLabels(df.netgrowth$OTU, data.k)
+
+df.netgrowth$taxlab   <- ifelse((df.netgrowth$prop_ww > 0.01) &
+                                 (df.netgrowth$km > -0.2) &
+                                 (df.netgrowth$km <  0.01), 
+                                  as.character(df.netgrowth$tax_name), "")
+
+plist        <- plotNetGrowthDistribution(df.netgrowth)
+
+print(plist[[1]])
+print(plist[[2]]) 
+
+ggsave(path="figs", filename="cumabun_by_netgrowth.pdf", 
+       plot=plist[[2]], width=8, height=6, units="cm")
+
+
+```
+
+## Plot simple ratio 
+
+```{r "Plot simple ratio"}
+ggplot(data=df.netgrowth, aes(x = ratio, fill = class)) +
+    geom_histogram() +
+    labs(x = "ratio", y = 'OTU count') +
+    theme(legend.position="none")
+  
+df.netgrowth  <- arrange(df.netgrowth, ratio)
+  
+ggplot(data=df.netgrowth, aes(x = ratio, y = cumsum(prop_as / 6) * 100)) +
+    geom_step() +
+    xlab("ratio") +
+    ylab('Cumulative read abundance (%)')
+```
+
+#Summarise data per plant by class
+
+Classes are "inactive", "low", "active", "max"
+
+```{r Summarize % and n by class}
+
+a <- group_by(df.netgrowth, pair, km_class) %.%
+     summarise( AS_percent = sum(prop_as * 100),
+                n_otus     = n() )
+
+# mean sludge% by class
+dcast(a, pair ~ km_class, value.var= "AS_percent", 
+      fun.aggregate= function(x) round(mean(x), 1))
+# mean # OTUs by class
+dcast(a, pair ~ km_class, value.var= "n_otus", fun.aggregate= sum, margins= TRUE )
+
+# percent reads near k max
+cumsum(df.netgrowth$prop_as / 6)[sum(df.netgrowth$k > 0.02857 )]
+high_growth_rate <- df.netgrowth[df.netgrowth$k > 0.02857, ]
+max(high_growth_rate$prop_ww)
+
+# percent of reads with k > -0.15
+cumsum(df.netgrowth$prop_as / 6)[sum(df.netgrowth$km < -0)]
+
+```
+
+The assumption is that the net growth rate at steady state will be equal to the 
+max net growth rate (1/35 = 0.0286).
+
+There are a lot of OTUs that are at or near the upper limit. 
+
+```{r}
+printNetGrowthStats(df.netgrowth)
+```
+
+so the are on average 64% of the reads in the sludge detected in the influent, 
+but this number is highly variable probably because the sampling of the sludge
+taxa in the nfluent is near the level of detection.
+
+```{r "color by influent abundance"}
+myBreaks <- c(1,10)
+
+ggplot(data=df.netgrowth, aes(x=prop_as*100, y= km, 
+                               color = prop_ww*100, label = taxlab)) +
+  geom_point() +
+  geom_text( size = 3, color = "black", vjust= 1, hjust = 1) +
+  scale_x_log10(breaks= c(0.01,0.1,1,10), limits= c(0.01,15)) +
+  scale_colour_gradient(trans= "log", low="white", high="red",
+                        breaks= myBreaks, labels = myBreaks) +
+  facet_wrap(pair~plant) +
+  labs(y= expression(paste("Bounded net growth rate (", d^-1, ")", sep="")), 
+       x= 'biomass abundance (%)', 
+       colour = "ww abundance (%)") 
+ggsave(filename="figs/sludge_vs_k_all.png")
+
+
+myBreaks <- c(1,10)
+
+df.netgrowth$taxlab <- NA
+df.netgrowth$taxlab <- with(df.netgrowth, 
+                             ifelse((prop_ww >= 0.01) & (prop_as >= 0.0012) , 
+                                    tax_name, taxlab) )
+
+p <- plot_netgrowth(mydata=df.netgrowth, value="AAE-2")
+p
+
+info <- c(as.character(sample_data(data.k)$pair), "all")
+per_plant_plots <- lapply(info, FUN=plot_netgrowth)
+names(per_plant_plots) <- info
+```
+
+```{r "Percentage of AS reads also in influent"}
+class_by_pair <- group_by(df.netgrowth, pair, class)
+d <-summarise(class_by_pair, "total" = n()) %.%
+    arrange(class, pair)
+d1 <- d[d$class == "Both", "total"] / d[d$class == "AS", "total"] * 100
+names(d1) <- unique(d$pair)
+# result per pair
+d1
+
+by_class <- group_by(df.netgrowth, class)
+d2 <-summarise(by_class, "total" = n()) %.%
+    arrange(class)
+d2
+# overall fraction
+d2[d2$class == "Both", "total"] / d2[d2$class == "AS", "total"] *100
+
+```
+
+
+## NOB in influent and effluent
+
+```{r}
+data.p <- transform_sample_counts(physeq = data.k, function(x) x / sum(x) * 100)
+NOB <- subset_taxa(data.p,
+                   (Genus ==  "Nitrotoga_etal") | (Genus == "Nitrospira") )
+NOB.prop <- transform_sample_counts(physeq = NOB, function(x) x / sum(x) * 100 )
+
+p <- plot_bar(NOB, "Genus", fill="OTU" , facet_grid = type ~ pair) 
+p$data$OTU    <- factor(p$data$OTU)
+p$data$Genus  <- gsub(p$data$Genus, pattern="_etal", replacement="")
+p_tetra_total <- p + 
+  geom_bar(aes(fill = OTU, color = OTU), stat = "identity", position = "stack") +
+  ylab("Read abundance (% total)") +
+  xlab(label="") + 
+  theme_bw() +
+  theme(legend.position="none",
+        axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8, vjust = 0.2),
+        axis.text.x  = element_blank(),
+        axis.text.y  = element_text(size = 6),
+        axis.ticks.x = element_line(size = 0.3),
+        axis.ticks.y = element_line(size = 0.3),
+        strip.text   = element_text(size = 6),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(linetype= "blank", fill = "white")
+        )
+
+p2 <- plot_bar(NOB.prop, "Genus", fill="OTU" , facet_grid = type ~ pair)
+p2$data$OTU   <- factor(p2$data$OTU)
+p2$data$Genus <- gsub(p2$data$Genus, pattern="_etal", replacement="")
+p_tetra_rel <- p2 +
+  geom_bar(aes(fill = OTU, color = OTU), stat = "identity", position = "stack") +
+  ylab("Read abundance (% total)") +
+  xlab(label="") + 
+  theme_bw() +
+  theme(legend.position="none",
+        axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8, vjust = 0.2),
+        axis.text.x  = element_text(size = 6,  hjust = 1, vjust = 1, 
+                                    angle = 45),
+        axis.text.y  = element_text(size = 6),
+        axis.ticks.x = element_line(size = 0.3),
+        axis.ticks.y = element_line(size = 0.3),
+        strip.text   = element_text(size = 6),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(linetype= "blank", fill = "white")
+        )
+
+pdf(file = "figs/Figure_S10.pdf")
+grid.arrange(p_tetra_total, p_tetra_rel, nrow = 2)
+dev.off()
+
+```
+
+
+
+
