@@ -31,32 +31,27 @@ sapply(datasets, function(dataset) sum(   nsamples(dataset)))
 sapply(datasets, function(dataset) sum(      ntaxa(dataset)))
 
 min(sapply(datasets, function(dataset) sample_sums(dataset) ))
-resample_depth <- 40000
-
-rarefyDataset <- function(mydata, sampletype= NA, depth, seed= 1234){
-  if(!is.na(sampletype)){
-    mydata <- subset_samples(mydata, type == sampletype)
-  }
-  mydata <- rarefy_even_depth(mydata,     rngseed = seed,
-                                      sample.size = depth, 
-                                         trimOTUs = TRUE)
-  mydata
-}
 
 WWDatasets <- lapply(ids, function(id) 
-                    rarefyDataset(datasets[[id]],
-                                  sampletype = "WW",
-                                  depth = resample_depth, 
-                                   seed = 1234))
+                    subset_samples(datasets[[id]], type == "WW"))
+names(WWDatasets) <- ids
+WWDatasets <- lapply(ids, function(id) 
+                    rarefy_even_depth(WWDatasets[[id]],     
+                                    rngseed = 1234,
+                                    sample.size = 40000, 
+                                    trimOTUs = TRUE))
 names(WWDatasets) <- ids
 
 lapply(WWDatasets, function(dataset) printDatasetStats(dataset) )
 
 ASDatasets <- lapply(ids, function(id) 
-                    rarefyDataset(datasets[[id]],
-                                  sampletype = "AS",
-                                  depth = resample_depth, 
-                                   seed = 1234))
+                    subset_samples(datasets[[id]], type == "AS"))
+names(ASDatasets) <- ids
+ASDatasets <- lapply(ids, function(id) 
+                    rarefy_even_depth(ASDatasets[[id]],     
+                                    rngseed = 1234,
+                                    sample.size = 40000, 
+                                    trimOTUs = TRUE))
 names(ASDatasets) <- ids
 
 lapply(ASDatasets, function(dataset) printDatasetStats(dataset) )
@@ -74,11 +69,10 @@ coredataframe <- calcSummaryData(WWDatasets, ids, core_cutoff=1)
 
 OTUtotals <- group_by(coredataframe, identities) %.%
   summarize( "totalOTUs"  = sum(taxsum),
-     "coreOTUs"   = taxsum[ corestatus == "core"] , 
-     "percentcoreOTUs"= round(taxsum[corestatus == "core"] / 
-                               sum(taxsum) * 100, 1),
-     "percentreads"   = round(readprop[corestatus == "core"] *
-                                100, 1))
+    "coreOTUs"   = taxsum[ corestatus == "core"] , 
+    "percentcoreOTUs"= round(
+                      taxsum[corestatus == "core"] / sum(taxsum) * 100, 1),
+    "percentreads"   = round(readprop[corestatus == "core"] * 100, 1))
 print(OTUtotals)
 
 p <- plotCore(coredataframe, cumulative = FALSE)
@@ -110,26 +104,39 @@ plot3
 ## Heatmap comparing the influent and sludge
 
 ```{r}
-#1) top 50 i indløb
-top50.ww <- prune_taxa(names(sort(taxa_sums(WWDatasets[["otu94"]]),TRUE)[1:50]), 
-                      datasets[["otu94"]]) 
-sample_data(top50.ww)$Desc <- sort(with(sample_data(top50.ww), paste(type, plant_name)), decreasing = TRUE) 
-top50ww.heatmap <- plot_heatmap(top50.ww, method = "NMDS", distance = "bray", 
-                                sample.label = "Desc", taxa.label = "Genus", 
-                                low="#66CCFF", high="#000033")
-top50ww.heatmap
 
+plotTopNHeatmap <- function(fulldataset, topNdataset, topN){
+  pruned_dataset <- prune_taxa(taxa = names(sort(taxa_sums(topNdataset),TRUE)[1:topN]), 
+                      fulldataset)
+  print(names(sort(taxa_sums(topNdataset), decreasing = TRUE)[1:10]))
+  sample_data(pruned_dataset)$Desc <- sort(with(sample_data(pruned_dataset), 
+                                                paste(type, plant_name)), 
+                                           decreasing = TRUE) 
+#   df.topN$taxname  <- makeTaxLabels(df.topN$OTU, topNtaxa)
+#   
+#   df.topN[ df.topN$OTU     == "681", "taxname"]                      <- "Tetrasphaera"
+#   df.topN[ df.topN$taxname == "CandidatusAccumulibacter", "taxname"] <- "Accumulibacter"
+#   df.topN[ df.topN$taxname == "CandidatusXenovorus", "taxname"]      <- "Xanthamonadaceae"
+#   df.topN[ df.topN$taxname == "CandidatusEpiflobacter", "taxname"]   <- "Epiflobacter"
+#   df.topN[ df.topN$taxname == "Unk01", "taxname"]                    <- "Ellin_Unk01"  
+#   df.topN[ df.topN$taxname == "Methyloversatilis", "taxname"]        <- "Sulfuritalia"
+#   df.topN[ df.topN$taxname == "Unk04", "taxname"]                    <- "Ellin_Unk04"
+
+  myheatmap <- plot_heatmap(pruned_dataset, method = "NMDS", distance = "bray", 
+                                sample.label = "type", taxa.label = "Genus", 
+                                low="#000033", high="#66CCFF")
+  list(pruned_dataset, myheatmap)
+}
+
+
+#1) top 50 i indløb
+top50ww <- plotTopNHeatmap( datasets[["otu94"]], topNdataset = WWDatasets[["otu94"]], topN = 100)
 
 #2) top 50 arter i aktivt slam?
-top50.as <- prune_taxa(names(sort(taxa_sums(ASDatasets[["otu94"]]),TRUE)[1:50]), 
-                      datasets[["otu94"]]) 
-sample_data(top50.as)$Desc <- sort(with(sample_data(top50.as), paste(type, plant_name)), decreasing = TRUE) 
-top50as.heatmap <- plot_heatmap(top50.as,  
-                                sample.label = "Desc", taxa.label = "Genus", 
-                                low="#66CCFF", high="#000033")
-top50as.heatmap
+top50as <- plotTopNHeatmap( datasets[["otu94"]], topNdataset = ASDatasets[["otu94"]], topN = 100)
 
-
+print(top50ww[[2]])
+print(top50as[[2]])
 ```
 
 
