@@ -1,0 +1,6 @@
+GenericRepSetPicker parameters:
+Algorithm:most_abundant: picks most abundant sequence in OTU
+Application:None
+ChoiceF:<function make_most_abundant at 0x341e848>
+ChoiceFRequiresSeqs:True
+Result path: /space/users/ams/Dropbox/docs/proj/core-paper/exp/EXP25-qualfilter-reduced_b/netgrowth_qiime//otus94/seqs_rep_set94.fasta
