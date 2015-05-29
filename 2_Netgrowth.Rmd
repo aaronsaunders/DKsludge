@@ -33,8 +33,10 @@ sapply(datasets, function(dataset) sum(      ntaxa(dataset)))
 min(sapply(datasets, function(dataset) sample_sums(dataset) ))
 resample_depth <- 40000
 
-rarefyDataset <- function(mydata, depth= FALSE, seed= FALSE){
-  mydata <- subset_samples(mydata, type == "WW")
+rarefyDataset <- function(mydata, sampletype= NA, depth, seed= 1234){
+  if(!is.na(sampletype)){
+    mydata <- subset_samples(mydata, type == sampletype)
+  }
   mydata <- rarefy_even_depth(mydata,     rngseed = seed,
                                       sample.size = depth, 
                                          trimOTUs = TRUE)
@@ -43,11 +45,21 @@ rarefyDataset <- function(mydata, depth= FALSE, seed= FALSE){
 
 WWDatasets <- lapply(ids, function(id) 
                     rarefyDataset(datasets[[id]],
+                                  sampletype = "WW",
                                   depth = resample_depth, 
                                    seed = 1234))
 names(WWDatasets) <- ids
 
 lapply(WWDatasets, function(dataset) printDatasetStats(dataset) )
+
+ASDatasets <- lapply(ids, function(id) 
+                    rarefyDataset(datasets[[id]],
+                                  sampletype = "AS",
+                                  depth = resample_depth, 
+                                   seed = 1234))
+names(ASDatasets) <- ids
+
+lapply(ASDatasets, function(dataset) printDatasetStats(dataset) )
 
 data.k <- SampleEvenDepth(datasets[["otu97"]], 
                           depth = 20000, 
@@ -82,20 +94,42 @@ grid.arrange(otuplot, readsplot, nrow = 2)
 
 ## Abundnace of top 10 OTUs
 
-```{r "abundance of top10 in infleunt and sludge"}
-ds   <- WWDatasets[["otu94"]]
-ds.p <- transform_sample_counts(ds, function(x) x / sum(x))
-n    <- 10
-topNww_otus  <- names(sort(taxa_sums(ds.p), decreasing=TRUE)[1:n])
-topN.ww      <- subset_taxa(ds, taxa_names(ds) %in% topNww_otus )
+```{r "abundance of top10 in influent and sludge"}
+
+top10.ww <- prune_taxa(names(sort(taxa_sums(WWDatasets[["otu94"]]),TRUE)[1:10]), 
+                      WWDatasets[["otu94"]]) 
 
 print(formatAverage(sample_sums(topN.ww) / sample_sums(ds) * 100,
                     decimals=0))
 
 plot3 <- compareTop20AsWw(data.k)
-ggsave(path="figs", filename="top20OTUsWW_vs_AS.pdf", 
-       plot=plot3, width=8)
+ggsave(path="figs", filename="top20OTUsWW_vs_AS.pdf", plot=plot3, width=8)
 plot3
+```
+
+## Heatmap comparing the influent and sludge
+
+```{r}
+#1) top 50 i indløb
+top50.ww <- prune_taxa(names(sort(taxa_sums(WWDatasets[["otu94"]]),TRUE)[1:50]), 
+                      datasets[["otu94"]]) 
+sample_data(top50.ww)$Desc <- sort(with(sample_data(top50.ww), paste(type, plant_name)), decreasing = TRUE) 
+top50ww.heatmap <- plot_heatmap(top50.ww, method = "NMDS", distance = "bray", 
+                                sample.label = "Desc", taxa.label = "Genus", 
+                                low="#66CCFF", high="#000033")
+top50ww.heatmap
+
+
+#2) top 50 arter i aktivt slam?
+top50.as <- prune_taxa(names(sort(taxa_sums(ASDatasets[["otu94"]]),TRUE)[1:50]), 
+                      datasets[["otu94"]]) 
+sample_data(top50.as)$Desc <- sort(with(sample_data(top50.as), paste(type, plant_name)), decreasing = TRUE) 
+top50as.heatmap <- plot_heatmap(top50.as,  
+                                sample.label = "Desc", taxa.label = "Genus", 
+                                low="#66CCFF", high="#000033")
+top50as.heatmap
+
+
 ```
 
 
@@ -121,9 +155,6 @@ ggsave(path="figs", filename="CCA_AS_vs_WW.pdf", plot=plot1)
 
 
 The CCA splits the samples by sample type in the first CA and roughly by plant in the second.
-
-
-Add run model
 
 ## Calculate Net growth rates
 
